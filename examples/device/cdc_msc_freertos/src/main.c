@@ -83,7 +83,6 @@ void cdc_task(void* params);
 int main(void)
 {
   board_init();
-  tusb_init();
 
   // soft timer for blinky
   blinky_tm = xTimerCreateStatic(NULL, pdMS_TO_TICKS(BLINK_NOT_MOUNTED), true, NULL, led_blinky_cb, &blinky_tmdef);
@@ -115,6 +114,10 @@ void app_main(void)
 void usb_device_task(void* param)
 {
   (void) param;
+
+  // This should be called after scheduler/kernel is started.
+  // Otherwise it could cause kernel issue since USB IRQ handler does use RTOS queue API.
+  tusb_init();
 
   // RTOS forever loop
   while (1)
@@ -165,9 +168,11 @@ void cdc_task(void* params)
   // RTOS forever loop
   while ( 1 )
   {
-    if ( tud_cdc_connected() )
+    // connected() check for DTR bit
+    // Most but not all terminal client set this when making connection
+    // if ( tud_cdc_connected() )
     {
-      // connected and there are data available
+      // There are data available
       if ( tud_cdc_available() )
       {
         uint8_t buf[64];
@@ -195,12 +200,14 @@ void cdc_task(void* params)
 void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
 {
   (void) itf;
+  (void) rts;
 
   // connected
-  if ( dtr && rts )
+  if ( dtr )
   {
     // print initial message when connected
     tud_cdc_write_str("\r\nTinyUSB CDC MSC device with FreeRTOS example\r\n");
+    tud_cdc_write_flush();
   }
 }
 

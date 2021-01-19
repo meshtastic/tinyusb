@@ -34,8 +34,13 @@
 //--------------------------------------------------------------------+
 // Class Driver Configuration
 //--------------------------------------------------------------------+
-#ifndef CFG_TUD_CDC_EPSIZE
-#define CFG_TUD_CDC_EPSIZE 64
+#if !defined(CFG_TUD_CDC_EP_BUFSIZE) && defined(CFG_TUD_CDC_EPSIZE)
+  #warning CFG_TUD_CDC_EPSIZE is renamed to CFG_TUD_CDC_EP_BUFSIZE, please update to use the new name
+  #define CFG_TUD_CDC_EP_BUFSIZE    CFG_TUD_CDC_EPSIZE
+#endif
+
+#ifndef CFG_TUD_CDC_EP_BUFSIZE
+  #define CFG_TUD_CDC_EP_BUFSIZE    (TUD_OPT_HIGH_SPEED ? 512 : 64)
 #endif
 
 #ifdef __cplusplus
@@ -51,7 +56,6 @@
 // Application API (Multiple Ports)
 // CFG_TUD_CDC > 1
 //--------------------------------------------------------------------+
-
 
 // Check if terminal is connected to this port
 bool     tud_cdc_n_connected       (uint8_t itf);
@@ -88,15 +92,18 @@ uint32_t tud_cdc_n_write           (uint8_t itf, void const* buffer, uint32_t bu
 static inline
 uint32_t tud_cdc_n_write_char      (uint8_t itf, char ch);
 
-// Write a nul-terminated string
+// Write a null-terminated string
 static inline
 uint32_t tud_cdc_n_write_str       (uint8_t itf, char const* str);
 
 // Force sending data if possible, return number of forced bytes
 uint32_t tud_cdc_n_write_flush     (uint8_t itf);
 
-// Return number of characters available for writing
+// Return the number of bytes (characters) available for writing to TX FIFO buffer in a single n_write operation.
 uint32_t tud_cdc_n_write_available (uint8_t itf);
+
+// Clear the transmit FIFO
+bool tud_cdc_n_write_clear (uint8_t itf);
 
 //--------------------------------------------------------------------+
 // Application API (Single Port)
@@ -117,6 +124,7 @@ static inline uint32_t tud_cdc_write           (void const* buffer, uint32_t buf
 static inline uint32_t tud_cdc_write_str       (char const* str);
 static inline uint32_t tud_cdc_write_flush     (void);
 static inline uint32_t tud_cdc_write_available (void);
+static inline bool     tud_cdc_write_clear     (void);
 
 //--------------------------------------------------------------------+
 // Application Callback API (weak is optional)
@@ -127,6 +135,9 @@ TU_ATTR_WEAK void tud_cdc_rx_cb(uint8_t itf);
 
 // Invoked when received `wanted_char`
 TU_ATTR_WEAK void tud_cdc_rx_wanted_cb(uint8_t itf, char wanted_char);
+
+// Invoked when space becomes available in TX buffer
+TU_ATTR_WEAK void tud_cdc_tx_complete_cb(uint8_t itf);
 
 // Invoked when line state DTR & RTS are changed via SET_CONTROL_LINE_STATE
 TU_ATTR_WEAK void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts);
@@ -223,18 +234,22 @@ static inline uint32_t tud_cdc_write_available(void)
   return tud_cdc_n_write_available(0);
 }
 
+static inline bool tud_cdc_write_clear(void)
+{
+  return tud_cdc_n_write_clear(0);
+}
+
 /** @} */
 /** @} */
 
 //--------------------------------------------------------------------+
 // INTERNAL USBD-CLASS DRIVER API
 //--------------------------------------------------------------------+
-void     cdcd_init             (void);
-void     cdcd_reset            (uint8_t rhport);
-uint16_t cdcd_open             (uint8_t rhport, tusb_desc_interface_t const * itf_desc, uint16_t max_len);
-bool     cdcd_control_request  (uint8_t rhport, tusb_control_request_t const * request);
-bool     cdcd_control_complete (uint8_t rhport, tusb_control_request_t const * request);
-bool     cdcd_xfer_cb          (uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_t xferred_bytes);
+void     cdcd_init            (void);
+void     cdcd_reset           (uint8_t rhport);
+uint16_t cdcd_open            (uint8_t rhport, tusb_desc_interface_t const * itf_desc, uint16_t max_len);
+bool     cdcd_control_xfer_cb (uint8_t rhport, uint8_t stage, tusb_control_request_t const * request);
+bool     cdcd_xfer_cb         (uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_t xferred_bytes);
 
 #ifdef __cplusplus
  }

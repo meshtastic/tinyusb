@@ -54,6 +54,9 @@
 // FIFO size in bytes
 #define EP_FIFO_SIZE      1024
 
+// Max number of IN EP FIFOs
+#define EP_FIFO_NUM 5
+
 typedef struct {
     uint8_t *buffer;
     uint16_t total_len;
@@ -70,6 +73,16 @@ static uint32_t _setup_packet[2];
 
 #define XFER_CTL_BASE(_ep, _dir) &xfer_status[_ep][_dir]
 static xfer_ctl_t xfer_status[EP_MAX][2];
+
+// Keep count of how many FIFOs are in use
+static uint8_t _allocated_fifos = 1; //FIFO0 is always in use
+
+// Will either return an unused FIFO number, or 0 if all are used.
+static uint8_t get_free_fifo(void)
+{
+  if (_allocated_fifos < EP_FIFO_NUM) return _allocated_fifos++;
+  return 0;
+}
 
 // Setup the control endpoint 0.
 static void bus_reset(void)
@@ -152,8 +165,6 @@ static void enum_done_processing(void)
  *------------------------------------------------------------------*/
 void dcd_init(uint8_t rhport)
 {
-  (void)rhport;
-
   ESP_LOGV(TAG, "DCD init - Start");
 
   // A. Disconnect
@@ -191,6 +202,8 @@ void dcd_init(uint8_t rhport)
                  USB_ENUMDONEMSK_M |
                  USB_RESETDETMSK_M |
                  USB_DISCONNINTMSK_M; // host most only
+
+  dcd_connect(rhport);
 }
 
 void dcd_set_address(uint8_t rhport, uint8_t dev_addr)
@@ -205,6 +218,9 @@ void dcd_set_address(uint8_t rhport, uint8_t dev_addr)
 void dcd_remote_wakeup(uint8_t rhport)
 {
   (void)rhport;
+
+  // TODO must manually clear this bit after 1-15 ms
+  // USB0.DCTL |= USB_RMTWKUPSIG_M;
 }
 
 // connect by enabling internal pull-up resistor on D+/D-
@@ -236,7 +252,6 @@ bool dcd_edpt_open(uint8_t rhport, tusb_desc_endpoint_t const *desc_edpt)
   uint8_t const epnum = tu_edpt_number(desc_edpt->bEndpointAddress);
   uint8_t const dir = tu_edpt_dir(desc_edpt->bEndpointAddress);
 
-  TU_ASSERT(desc_edpt->wMaxPacketSize.size <= 64);
   TU_ASSERT(epnum < EP_MAX);
 
   xfer_ctl_t *xfer = XFER_CTL_BASE(epnum, dir);
@@ -271,8 +286,12 @@ bool dcd_edpt_open(uint8_t rhport, tusb_desc_endpoint_t const *desc_edpt)
     // - Offset: GRXFSIZ + 16 + Size*(epnum-1)
     // - IN EP 1 gets FIFO 1, IN EP "n" gets FIFO "n".
 
+    uint8_t fifo_num = get_free_fifo();
+    TU_ASSERT(fifo_num != 0);
+
+    in_ep[epnum].diepctl &= ~(USB_D_TXFNUM1_M | USB_D_EPTYPE1_M | USB_DI_SETD0PID1 | USB_D_MPS1_M);
     in_ep[epnum].diepctl |= USB_D_USBACTEP1_M |
-                            epnum << USB_D_TXFNUM1_S |
+                            fifo_num << USB_D_TXFNUM1_S |
                             desc_edpt->bmAttributes.xfer << USB_D_EPTYPE1_S |
                             (desc_edpt->bmAttributes.xfer != TUSB_XFER_ISOCHRONOUS ? (1 << USB_DI_SETD0PID1_S) : 0) |
                             desc_edpt->wMaxPacketSize.size << 0;
@@ -282,8 +301,8 @@ bool dcd_edpt_open(uint8_t rhport, tusb_desc_endpoint_t const *desc_edpt)
     // Both TXFD and TXSA are in unit of 32-bit words.
     // IN FIFO 0 was configured during enumeration, hence the "+ 16".
     uint16_t const allocated_size = (USB0.grxfsiz & 0x0000ffff) + 16;
-    uint16_t const fifo_size = (EP_FIFO_SIZE/4 - allocated_size) / (EP_MAX-1);
-    uint32_t const fifo_offset = allocated_size + fifo_size*(epnum-1);
+    uint16_t const fifo_size = (EP_FIFO_SIZE/4 - allocated_size) / (EP_FIFO_NUM-1);
+    uint32_t const fifo_offset = allocated_size + fifo_size*(fifo_num-1);
 
     // DIEPTXF starts at FIFO #1.
     USB0.dieptxf[epnum - 1] = (fifo_size << USB_NPTXFDEP_S) | fifo_offset;
@@ -361,7 +380,8 @@ void dcd_edpt_stall(uint8_t rhport, uint8_t ep_addr)
     }
 
     // Flush the FIFO, and wait until we have confirmed it cleared.
-    USB0.grstctl |= ((epnum - 1) << USB_TXFNUM_S);
+    uint8_t const fifo_num = ((in_ep[epnum].diepctl >> USB_D_TXFNUM1_S) & USB_D_TXFNUM1_V);
+    USB0.grstctl |= (fifo_num << USB_TXFNUM_S);
     USB0.grstctl |= USB_TXFFLSH_M;
     while ((USB0.grstctl & USB_TXFFLSH_M) != 0) ;
   } else {
@@ -637,6 +657,13 @@ static void handle_epin_ints(void)
           USB0.dtknqr4_fifoemptymsk &= ~(1 << n);
         }
       }
+
+      // XFER Timeout
+      if (USB0.in_ep_reg[n].diepint & USB_D_TIMEOUT0_M) {
+        // Clear interrupt or enpoint will hang.
+        USB0.in_ep_reg[n].diepint = USB_D_TIMEOUT0_M;
+        // Maybe retry?
+      }
     }
   }
 }
@@ -645,6 +672,7 @@ static void handle_epin_ints(void)
 static void _dcd_int_handler(void* arg)
 {
   (void) arg;
+  uint8_t const rhport = 0;
 
   const uint32_t int_status = USB0.gintsts;
   //const uint32_t int_msk = USB0.gintmsk;
@@ -653,6 +681,8 @@ static void _dcd_int_handler(void* arg)
     // start of reset
     ESP_EARLY_LOGV(TAG, "dcd_int_handler - reset");
     USB0.gintsts = USB_USBRST_M;
+    // FIFOs will be reassigned when the endpoints are reopen
+    _allocated_fifos = 1;
     bus_reset();
   }
 
@@ -668,7 +698,19 @@ static void _dcd_int_handler(void* arg)
     // the end of reset.
     USB0.gintsts = USB_ENUMDONE_M;
     enum_done_processing();
-    dcd_event_bus_signal(0, DCD_EVENT_BUS_RESET, true);
+    dcd_event_bus_reset(rhport, TUSB_SPEED_FULL, true);
+  }
+
+  if(int_status & USB_USBSUSP_M)
+  {
+    USB0.gintsts = USB_USBSUSP_M;
+    dcd_event_bus_signal(rhport, DCD_EVENT_SUSPEND, true);
+  }
+
+  if(int_status & USB_WKUPINT_M)
+  {
+    USB0.gintsts = USB_WKUPINT_M;
+    dcd_event_bus_signal(rhport, DCD_EVENT_RESUME, true);
   }
 
   if (int_status & USB_OTGINT_M)
@@ -680,7 +722,7 @@ static void _dcd_int_handler(void* arg)
 
     if (otg_int & USB_SESENDDET_M)
     {
-      dcd_event_bus_signal(0, DCD_EVENT_UNPLUGGED, true);
+      dcd_event_bus_signal(rhport, DCD_EVENT_UNPLUGGED, true);
     }
 
     USB0.gotgint = otg_int;
@@ -689,7 +731,7 @@ static void _dcd_int_handler(void* arg)
 #if USE_SOF
   if (int_status & USB_SOF_M) {
     USB0.gintsts = USB_SOF_M;
-    dcd_event_bus_signal(0, DCD_EVENT_SOF, true); // do nothing actually
+    dcd_event_bus_signal(rhport, DCD_EVENT_SOF, true); // do nothing actually
   }
 #endif
 

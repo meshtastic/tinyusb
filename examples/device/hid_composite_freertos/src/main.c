@@ -58,7 +58,12 @@ StaticTimer_t blinky_tmdef;
 TimerHandle_t blinky_tm;
 
 // static task for usbd
-#define USBD_STACK_SIZE     (3*configMINIMAL_STACK_SIZE/2)
+#if CFG_TUSB_DEBUG
+  #define USBD_STACK_SIZE     (3*configMINIMAL_STACK_SIZE)
+#else
+  #define USBD_STACK_SIZE     (3*configMINIMAL_STACK_SIZE/2)
+#endif
+
 StackType_t  usb_device_stack[USBD_STACK_SIZE];
 StaticTask_t usb_device_taskdef;
 
@@ -79,7 +84,6 @@ void hid_task(void* params);
 int main(void)
 {
   board_init();
-  tusb_init();
 
   // soft timer for blinky
   blinky_tm = xTimerCreateStatic(NULL, pdMS_TO_TICKS(BLINK_NOT_MOUNTED), true, NULL, led_blinky_cb, &blinky_tmdef);
@@ -111,6 +115,10 @@ void app_main(void)
 void usb_device_task(void* param)
 {
   (void) param;
+
+  // This should be called after scheduler/kernel is started.
+  // Otherwise it could cause kernel issue since USB IRQ handler does use RTOS queue API.
+  tusb_init();
 
   // RTOS forever loop
   while (1)

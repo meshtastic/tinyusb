@@ -15,23 +15,23 @@ CFLAGS += -Wno-error=undef
 LD_FILE = hw/bsp/$(BOARD)/samd51g19a_flash.ld
 
 SRC_C += \
-	hw/mcu/microchip/samd/asf4/samd51/gcc/gcc/startup_samd51.c \
-	hw/mcu/microchip/samd/asf4/samd51/gcc/system_samd51.c \
-	hw/mcu/microchip/samd/asf4/samd51/hpl/gclk/hpl_gclk.c \
-	hw/mcu/microchip/samd/asf4/samd51/hpl/mclk/hpl_mclk.c \
-	hw/mcu/microchip/samd/asf4/samd51/hpl/osc32kctrl/hpl_osc32kctrl.c \
-	hw/mcu/microchip/samd/asf4/samd51/hpl/oscctrl/hpl_oscctrl.c \
-	hw/mcu/microchip/samd/asf4/samd51/hal/src/hal_atomic.c
+	hw/mcu/microchip/asf4/samd51/gcc/gcc/startup_samd51.c \
+	hw/mcu/microchip/asf4/samd51/gcc/system_samd51.c \
+	hw/mcu/microchip/asf4/samd51/hpl/gclk/hpl_gclk.c \
+	hw/mcu/microchip/asf4/samd51/hpl/mclk/hpl_mclk.c \
+	hw/mcu/microchip/asf4/samd51/hpl/osc32kctrl/hpl_osc32kctrl.c \
+	hw/mcu/microchip/asf4/samd51/hpl/oscctrl/hpl_oscctrl.c \
+	hw/mcu/microchip/asf4/samd51/hal/src/hal_atomic.c
 
 INC += \
-	$(TOP)/hw/mcu/microchip/samd/asf4/samd51/ \
-	$(TOP)/hw/mcu/microchip/samd/asf4/samd51/config \
-	$(TOP)/hw/mcu/microchip/samd/asf4/samd51/include \
-	$(TOP)/hw/mcu/microchip/samd/asf4/samd51/hal/include \
-	$(TOP)/hw/mcu/microchip/samd/asf4/samd51/hal/utils/include \
-	$(TOP)/hw/mcu/microchip/samd/asf4/samd51/hpl/port \
-	$(TOP)/hw/mcu/microchip/samd/asf4/samd51/hri \
-	$(TOP)/hw/mcu/microchip/samd/asf4/samd51/CMSIS/Include
+	$(TOP)/hw/mcu/microchip/asf4/samd51/ \
+	$(TOP)/hw/mcu/microchip/asf4/samd51/config \
+	$(TOP)/hw/mcu/microchip/asf4/samd51/include \
+	$(TOP)/hw/mcu/microchip/asf4/samd51/hal/include \
+	$(TOP)/hw/mcu/microchip/asf4/samd51/hal/utils/include \
+	$(TOP)/hw/mcu/microchip/asf4/samd51/hpl/port \
+	$(TOP)/hw/mcu/microchip/asf4/samd51/hri \
+	$(TOP)/hw/mcu/microchip/asf4/samd51/CMSIS/Include
 
 # For TinyUSB port source
 VENDOR = microchip
@@ -42,7 +42,12 @@ FREERTOS_PORT = ARM_CM4F
 
 # For flash-jlink target
 JLINK_DEVICE = ATSAMD51J19
-JLINK_IF = swd
 
-# flash using jlink
-flash: flash-jlink
+# flash using bossac at least version 1.8
+# can be found in arduino15/packages/arduino/tools/bossac/
+# Add it to your PATH or change BOSSAC variable to match your installation
+BOSSAC = bossac
+
+flash: $(BUILD)/$(BOARD)-firmware.bin
+	@:$(call check_defined, SERIAL, example: SERIAL=/dev/ttyACM0)
+	$(BOSSAC) --port=$(SERIAL) -U -i --offset=0x4000 -e -w $^ -R

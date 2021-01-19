@@ -108,15 +108,38 @@ bool hcd_init(void)
   return ehci_init(TUH_OPT_RHPORT);
 }
 
+uint32_t hcd_uframe_number(uint8_t rhport)
+{
+  (void) rhport;
+  return ehci_data.uframe_number + ehci_data.regs->frame_index;
+}
+
 void hcd_port_reset(uint8_t rhport)
 {
   (void) rhport;
 
   ehci_registers_t* regs = ehci_data.regs;
 
-  regs->portsc_bm.port_enabled = 0; // disable port before reset
-  regs->portsc_bm.port_reset = 1;
+//  regs->portsc_bm.port_enabled = 0; // disable port before reset
+//  regs->portsc_bm.port_reset = 1;
+
+  uint32_t portsc = regs->portsc;
+
+  portsc &= ~(EHCI_PORTSC_MASK_PORT_EANBLED);
+  portsc |= EHCI_PORTSC_MASK_PORT_RESET;
+
+  regs->portsc = portsc;
 }
+
+#if 0
+void hcd_port_reset_end(uint8_t rhport)
+{
+  (void) rhport;
+
+  ehci_registers_t* regs = ehci_data.regs;
+  regs->portsc_bm.port_reset = 0;
+}
+#endif
 
 bool hcd_port_connect_status(uint8_t rhport)
 {
@@ -192,7 +215,7 @@ static bool ehci_init(uint8_t rhport)
   regs->status = EHCI_INT_MASK_ALL; // 2. clear all status
 
   regs->inten  = EHCI_INT_MASK_ERROR | EHCI_INT_MASK_PORT_CHANGE | EHCI_INT_MASK_ASYNC_ADVANCE |
-                 EHCI_INT_MASK_NXP_PERIODIC | EHCI_INT_MASK_NXP_ASYNC ;
+                 EHCI_INT_MASK_NXP_PERIODIC | EHCI_INT_MASK_NXP_ASYNC | EHCI_INT_MASK_FRAMELIST_ROLLOVER;
 
   //------------- Asynchronous List -------------//
   ehci_qhd_t * const async_head = qhd_async_head(rhport);
@@ -303,6 +326,22 @@ bool hcd_edpt_xfer(uint8_t rhport, uint8_t dev_addr, uint8_t ep_addr, uint8_t * 
 
     // attach TD
     qhd->qtd_overlay.next.address = (uint32_t) qtd;
+  }else
+  {
+    ehci_qhd_t *p_qhd = qhd_get_from_addr(dev_addr, ep_addr);
+    ehci_qtd_t *p_qtd = qtd_find_free();
+    TU_ASSERT(p_qtd);
+
+    qtd_init(p_qtd, buffer, buflen);
+    p_qtd->pid = p_qhd->pid;
+
+    // Insert TD to QH
+    qtd_insert_to_qhd(p_qhd, p_qtd);
+
+    p_qhd->p_qtd_list_tail->int_on_complete = 1;
+
+    // attach head QTD to QHD start transferring
+    p_qhd->qtd_overlay.next.address = (uint32_t) p_qhd->p_qtd_list_head;
   }
 
   return true;
@@ -358,7 +397,7 @@ bool hcd_edpt_open(uint8_t rhport, uint8_t dev_addr, tusb_desc_endpoint_t const 
   if ( dev_addr == 0 ) return true;
 
   // Insert to list
-  ehci_link_t * list_head;
+  ehci_link_t * list_head = NULL;
 
   switch (ep_desc->bmAttributes.xfer)
   {
@@ -378,8 +417,10 @@ bool hcd_edpt_open(uint8_t rhport, uint8_t dev_addr, tusb_desc_endpoint_t const 
     default: break;
   }
 
+  TU_ASSERT(list_head);
+
   // TODO might need to disable async/period list
-  list_insert( list_head, (ehci_link_t*) p_qhd, EHCI_QTYPE_QHD);
+  list_insert(list_head, (ehci_link_t*) p_qhd, EHCI_QTYPE_QHD);
 
   return true;
 }
@@ -464,10 +505,10 @@ static void port_connect_status_change_isr(uint8_t hostid)
   if (ehci_data.regs->portsc_bm.current_connect_status)
   {
     hcd_port_reset(hostid);
-    hcd_event_device_attach(hostid);
+    hcd_event_device_attach(hostid, true);
   }else // device unplugged
   {
-    hcd_event_device_remove(hostid);
+    hcd_event_device_remove(hostid, true);
   }
 }
 
@@ -487,7 +528,7 @@ static void qhd_xfer_complete_isr(ehci_qhd_t * p_qhd)
     {
       // end of request
       // call USBH callback
-      hcd_event_xfer_complete(p_qhd->dev_addr, tu_edpt_addr(p_qhd->ep_number, p_qhd->pid == EHCI_PID_IN ? 1 : 0), XFER_RESULT_SUCCESS, p_qhd->total_xferred_bytes);
+      hcd_event_xfer_complete(p_qhd->dev_addr, tu_edpt_addr(p_qhd->ep_number, p_qhd->pid == EHCI_PID_IN ? 1 : 0), p_qhd->total_xferred_bytes, XFER_RESULT_SUCCESS, true);
       p_qhd->total_xferred_bytes = 0;
     }
   }
@@ -508,7 +549,7 @@ static void async_list_xfer_complete_isr(ehci_qhd_t * const async_head)
 
 static void period_list_xfer_complete_isr(uint8_t hostid, uint8_t interval_ms)
 {
-  uint8_t max_loop = 0;
+  uint16_t max_loop = 0;
   uint32_t const period_1ms_addr = (uint32_t) get_period_head(hostid, 1);
   ehci_link_t next_item = * get_period_head(hostid, interval_ms);
 
@@ -574,7 +615,7 @@ static void qhd_xfer_error_isr(ehci_qhd_t * p_qhd)
     }
 
     // call USBH callback
-    hcd_event_xfer_complete(p_qhd->dev_addr, tu_edpt_addr(p_qhd->ep_number, p_qhd->pid == EHCI_PID_IN ? 1 : 0), error_event, p_qhd->total_xferred_bytes);
+    hcd_event_xfer_complete(p_qhd->dev_addr, tu_edpt_addr(p_qhd->ep_number, p_qhd->pid == EHCI_PID_IN ? 1 : 0), p_qhd->total_xferred_bytes, error_event, true);
 
     p_qhd->total_xferred_bytes = 0;
   }
@@ -623,7 +664,7 @@ static void xfer_error_isr(uint8_t hostid)
 }
 
 //------------- Host Controller Driver's Interrupt Handler -------------//
-void hcd_isr(uint8_t rhport)
+void hcd_int_handler(uint8_t rhport)
 {
   ehci_registers_t* regs = ehci_data.regs;
 
@@ -633,6 +674,11 @@ void hcd_isr(uint8_t rhport)
   regs->status |= int_status; // Acknowledge handled interrupt
 
   if (int_status == 0) return;
+
+  if (int_status & EHCI_INT_MASK_FRAMELIST_ROLLOVER)
+  {
+    ehci_data.uframe_number += (EHCI_FRAMELIST_SIZE << 3);
+  }
 
   if (int_status & EHCI_INT_MASK_PORT_CHANGE)
   {

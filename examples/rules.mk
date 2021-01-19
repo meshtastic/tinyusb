@@ -12,11 +12,10 @@ all:
 	idf.py -B$(BUILD) -DBOARD=$(BOARD) build
 
 clean:
-	idf.py -B$(BUILD) clean
+	idf.py -B$(BUILD) -DBOARD=$(BOARD) clean
 
 flash:
-	@:$(call check_defined, SERIAL, example: SERIAL=/dev/ttyUSB0)
-	idf.py -B$(BUILD) -p $(SERIAL) flash
+	idf.py -B$(BUILD) -DBOARD=$(BOARD) flash
 
 else
 # GNU Make build system
@@ -34,6 +33,7 @@ SRC_C += \
 	src/common/tusb_fifo.c \
 	src/device/usbd.c \
 	src/device/usbd_control.c \
+	src/class/audio/audio_device.c \
 	src/class/cdc/cdc_device.c \
 	src/class/dfu/dfu_rt_device.c \
 	src/class/hid/hid_device.c \
@@ -81,7 +81,11 @@ uf2: $(BUILD)/$(BOARD)-firmware.uf2
 OBJ_DIRS = $(sort $(dir $(OBJ)))
 $(OBJ): | $(OBJ_DIRS)
 $(OBJ_DIRS):
+ifeq ($(CMDEXE),1)
+	@$(MKDIR) $(subst /,\,$@)
+else
 	@$(MKDIR) -p $@
+endif
 
 $(BUILD)/$(BOARD)-firmware.elf: $(OBJ)
 	@echo LINK $@
@@ -107,13 +111,6 @@ vpath %.c . $(TOP)
 $(BUILD)/obj/%.o: %.c
 	@echo CC $(notdir $@)
 	@$(CC) $(CFLAGS) -c -MD -o $@ $<
-	@# The following fixes the dependency file.
-	@# See http://make.paulandlesley.org/autodep.html for details.
-	@# Regex adjusted from the above to play better with Windows paths, etc.
-	@$(CP) $(@:.o=.d) $(@:.o=.P); \
-	  $(SED) -e 's/#.*//' -e 's/^.*:  *//' -e 's/ *\\$$//' \
-	      -e '/^$$/ d' -e 's/$$/ :/' < $(@:.o=.d) >> $(@:.o=.P); \
-	  $(RM) $(@:.o=.d)
 
 # ASM sources lower case .s
 vpath %.s . $(TOP)
@@ -132,8 +129,18 @@ size: $(BUILD)/$(BOARD)-firmware.elf
 	@$(SIZE) $<
 	-@echo ''
 
+.PHONY: clean
 clean:
-	rm -rf $(BUILD)
+ifeq ($(CMDEXE),1)
+	rd /S /Q $(subst /,\,$(BUILD))
+else
+	$(RM) -rf $(BUILD)
+endif
+
+# Print out the value of a make variable.
+# https://stackoverflow.com/questions/16467718/how-to-print-out-a-variable-in-makefile
+print-%:
+	@echo $* = $($*)
 
 # Flash binary using Jlink
 ifeq ($(OS),Windows_NT)
@@ -141,6 +148,8 @@ ifeq ($(OS),Windows_NT)
 else
   JLINKEXE = JLinkExe
 endif
+
+JLINK_IF ?= swd
 
 # Flash using jlink
 flash-jlink: $(BUILD)/$(BOARD)-firmware.hex
@@ -155,5 +164,10 @@ flash-jlink: $(BUILD)/$(BOARD)-firmware.hex
 # flash STM32 MCU using stlink with STM32 Cube Programmer CLI
 flash-stlink: $(BUILD)/$(BOARD)-firmware.elf
 	STM32_Programmer_CLI --connect port=swd --write $< --go
+
+# flash with pyocd
+flash-pyocd: $(BUILD)/$(BOARD)-firmware.hex
+	pyocd flash -t $(PYOCD_TARGET) $<
+	pyocd reset -t $(PYOCD_TARGET)
 
 endif # Make target

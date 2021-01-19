@@ -34,9 +34,14 @@ CXX = $(CROSS_COMPILE)g++
 OBJCOPY = $(CROSS_COMPILE)objcopy
 SIZE = $(CROSS_COMPILE)size
 MKDIR = mkdir
+ifeq ($(CMDEXE),1)
+CP = copy
+RM = del
+else
 SED = sed
 CP = cp
 RM = rm
+endif
 
 #-------------- Source files and compiler flags --------------
 
@@ -46,31 +51,32 @@ SRC_C += $(subst $(TOP)/,,$(wildcard $(TOP)/hw/bsp/$(BOARD)/*.c))
 
 # Compiler Flags
 CFLAGS += \
-	-fdata-sections \
-	-ffunction-sections \
-	-fsingle-precision-constant \
-	-fno-strict-aliasing \
-	-Wdouble-promotion \
-	-Wstrict-prototypes \
-	-Wall \
-	-Wextra \
-	-Werror \
-	-Wfatal-errors \
-	-Werror-implicit-function-declaration \
-	-Wfloat-equal \
-	-Wundef \
-	-Wshadow \
-	-Wwrite-strings \
-	-Wsign-compare \
-	-Wmissing-format-attribute \
-	-Wunreachable-code \
-	-Wcast-align
-	
+  -ggdb \
+  -fdata-sections \
+  -ffunction-sections \
+  -fsingle-precision-constant \
+  -fno-strict-aliasing \
+  -Wdouble-promotion \
+  -Wstrict-prototypes \
+  -Wall \
+  -Wextra \
+  -Werror \
+  -Wfatal-errors \
+  -Werror-implicit-function-declaration \
+  -Wfloat-equal \
+  -Wundef \
+  -Wshadow \
+  -Wwrite-strings \
+  -Wsign-compare \
+  -Wmissing-format-attribute \
+  -Wunreachable-code \
+  -Wcast-align
+
 # Debugging/Optimization
 ifeq ($(DEBUG), 1)
-  CFLAGS += -Og -ggdb
+  CFLAGS += -Og
 else
-	CFLAGS += -Os
+  CFLAGS += -Os
 endif
 
 # Log level is mapped to TUSB DEBUG option
@@ -80,14 +86,10 @@ endif
 
 # Logger: default is uart, can be set to rtt or swo
 ifeq ($(LOGGER),rtt)
-	RTT_SRC = lib/SEGGER_RTT
-	
-	CFLAGS += -DLOGGER_RTT -DSEGGER_RTT_MODE_DEFAULT=SEGGER_RTT_MODE_BLOCK_IF_FIFO_FULL
+  RTT_SRC = lib/SEGGER_RTT
+  CFLAGS += -DLOGGER_RTT -DSEGGER_RTT_MODE_DEFAULT=SEGGER_RTT_MODE_BLOCK_IF_FIFO_FULL
   INC   += $(TOP)/$(RTT_SRC)/RTT
-  SRC_C += $(RTT_SRC)/RTT/SEGGER_RTT_printf.c
   SRC_C += $(RTT_SRC)/RTT/SEGGER_RTT.c
-  
 else ifeq ($(LOGGER),swo)
-	CFLAGS += -DLOGGER_SWO
-
+  CFLAGS += -DLOGGER_SWO
 endif

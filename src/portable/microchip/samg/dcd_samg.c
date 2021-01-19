@@ -154,9 +154,8 @@ static void bus_reset(void)
 // Initialize controller to device mode
 void dcd_init (uint8_t rhport)
 {
-  (void) rhport;
-
   tu_memclr(_dcd_xfer, sizeof(_dcd_xfer));
+  dcd_connect(rhport);
 }
 
 // Enable device interrupt
@@ -339,7 +338,7 @@ void dcd_int_handler(uint8_t rhport)
   if (intr_status & UDP_ISR_ENDBUSRES_Msk)
   {
     bus_reset();
-    dcd_event_bus_signal(rhport, DCD_EVENT_BUS_RESET, true);
+    dcd_event_bus_reset(rhport, TUSB_SPEED_FULL, true);
   }
 
   // SOF

@@ -26,7 +26,9 @@
 
 #include "tusb_option.h"
 
-#if TUSB_OPT_DEVICE_ENABLED && (CFG_TUSB_MCU == OPT_MCU_SAMD51 || CFG_TUSB_MCU == OPT_MCU_SAMD21)
+#if TUSB_OPT_DEVICE_ENABLED && \
+    (CFG_TUSB_MCU == OPT_MCU_SAMD11 || CFG_TUSB_MCU == OPT_MCU_SAMD21 || \
+     CFG_TUSB_MCU == OPT_MCU_SAMD51 || CFG_TUSB_MCU == OPT_MCU_SAME5X)
 
 #include "sam.h"
 #include "device/dcd.h"
@@ -35,13 +37,24 @@
 /* MACRO TYPEDEF CONSTANT ENUM
  *------------------------------------------------------------------*/
 static TU_ATTR_ALIGNED(4) UsbDeviceDescBank sram_registers[8][2];
-static TU_ATTR_ALIGNED(4) uint8_t _setup_packet[8];
+
+// Setup packet is only 8 bytes in length. However under certain scenario,
+// USB DMA controller may decide to overwrite/overflow the buffer  with
+// 2 extra bytes of CRC. From datasheet's "Management of SETUP Transactions" section
+//    If the number of received data bytes is the maximum data payload specified by
+//    PCKSIZE.SIZE minus one, only the first CRC data is written to the data buffer.
+//    If the number of received data is equal or less than the data payload specified
+//    by PCKSIZE.SIZE minus two, both CRC data bytes are written to the data buffer.
+// Therefore we will need to increase it to 10 bytes here.
+static TU_ATTR_ALIGNED(4) uint8_t _setup_packet[8+2];
 
 // ready for receiving SETUP packet
 static inline void prepare_setup(void)
 {
   // Only make sure the EP0 OUT buffer is ready
   sram_registers[0][0].ADDR.reg = (uint32_t) _setup_packet;
+  sram_registers[0][0].PCKSIZE.bit.MULTI_PACKET_SIZE = sizeof(tusb_control_request_t);
+  sram_registers[0][0].PCKSIZE.bit.BYTE_COUNT = 0;
 }
 
 // Setup the control endpoint 0.
@@ -90,7 +103,7 @@ void dcd_init (uint8_t rhport)
   USB->DEVICE.INTENSET.reg = /* USB_DEVICE_INTENSET_SOF | */ USB_DEVICE_INTENSET_EORST;
 }
 
-#if CFG_TUSB_MCU == OPT_MCU_SAMD51
+#if CFG_TUSB_MCU == OPT_MCU_SAMD51 || CFG_TUSB_MCU == OPT_MCU_SAME5X
 
 void dcd_int_enable(uint8_t rhport)
 {
@@ -110,7 +123,7 @@ void dcd_int_disable(uint8_t rhport)
   NVIC_DisableIRQ(USB_0_IRQn);
 }
 
-#elif CFG_TUSB_MCU == OPT_MCU_SAMD21
+#elif CFG_TUSB_MCU == OPT_MCU_SAMD11 || CFG_TUSB_MCU == OPT_MCU_SAMD21
 
 void dcd_int_enable(uint8_t rhport)
 {
@@ -123,6 +136,11 @@ void dcd_int_disable(uint8_t rhport)
   (void) rhport;
   NVIC_DisableIRQ(USB_IRQn);
 }
+
+#else
+
+#error "No implementation available for dcd_int_enable / dcd_int_disable"
+
 #endif
 
 void dcd_set_address (uint8_t rhport, uint8_t dev_addr)
@@ -369,7 +387,7 @@ void dcd_int_handler (uint8_t rhport)
     USB->DEVICE.INTENCLR.reg = USB_DEVICE_INTFLAG_WAKEUP | USB_DEVICE_INTFLAG_SUSPEND;
 
     bus_reset();
-    dcd_event_bus_signal(0, DCD_EVENT_BUS_RESET, true);
+    dcd_event_bus_reset(0, TUSB_SPEED_FULL, true);
   }
 
   // Handle SETUP packet

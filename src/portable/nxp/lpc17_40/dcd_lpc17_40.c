@@ -181,6 +181,8 @@ void dcd_init(uint8_t rhport)
   LPC_USB->UDCAH = (uint32_t) _dcd.udca;
   LPC_USB->DMAIntEn = (DMA_INT_END_OF_XFER_MASK /*| DMA_INT_NEW_DD_REQUEST_MASK*/ | DMA_INT_ERROR_MASK);
 
+  dcd_connect(rhport);
+
   // Clear pending IRQ
   NVIC_ClearPendingIRQ(USB_IRQn);
 }
@@ -469,7 +471,7 @@ static void bus_event_isr(uint8_t rhport)
   if (dev_status & SIE_DEV_STATUS_RESET_MASK)
   {
     bus_reset();
-    dcd_event_bus_signal(rhport, DCD_EVENT_BUS_RESET, true);
+    dcd_event_bus_reset(rhport, TUSB_SPEED_FULL, true);
   }
 
   if (dev_status & SIE_DEV_STATUS_CONNECT_CHANGE_MASK)

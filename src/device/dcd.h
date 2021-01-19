@@ -60,18 +60,24 @@ typedef struct TU_ATTR_ALIGNED(4)
   uint8_t rhport;
   uint8_t event_id;
 
-  union {
-    // USBD_EVT_SETUP_RECEIVED
+  union
+  {
+    // BUS RESET
+    struct {
+      tusb_speed_t speed;
+    } bus_reset;
+
+    // SETUP_RECEIVED
     tusb_control_request_t setup_received;
 
-    // USBD_EVT_XFER_COMPLETE
+    // XFER_COMPLETE
     struct {
       uint8_t  ep_addr;
       uint8_t  result;
       uint32_t len;
     }xfer_complete;
 
-    // USBD_EVENT_FUNC_CALL
+    // FUNC_CALL
     struct {
       void (*func) (void*);
       void* param;
@@ -81,9 +87,9 @@ typedef struct TU_ATTR_ALIGNED(4)
 
 //TU_VERIFY_STATIC(sizeof(dcd_event_t) <= 12, "size is not correct");
 
-/*------------------------------------------------------------------*/
-/* Device API
- *------------------------------------------------------------------*/
+//--------------------------------------------------------------------+
+// Controller API
+//--------------------------------------------------------------------+
 
 // Initialize controller to device mode
 void dcd_init       (uint8_t rhport);
@@ -134,7 +140,7 @@ void dcd_edpt_stall       (uint8_t rhport, uint8_t ep_addr);
 void dcd_edpt_clear_stall (uint8_t rhport, uint8_t ep_addr);
 
 //--------------------------------------------------------------------+
-// Event API (Implemented by device stack)
+// Event API (implemented by stack)
 //--------------------------------------------------------------------+
 
 // Called by DCD to notify device stack
@@ -142,6 +148,9 @@ extern void dcd_event_handler(dcd_event_t const * event, bool in_isr);
 
 // helper to send bus signal event
 extern void dcd_event_bus_signal (uint8_t rhport, dcd_eventid_t eid, bool in_isr);
+
+// helper to send bus reset event
+extern void dcd_event_bus_reset (uint8_t rhport, tusb_speed_t speed, bool in_isr);
 
 // helper to send setup received
 extern void dcd_event_setup_received(uint8_t rhport, uint8_t const * setup, bool in_isr);

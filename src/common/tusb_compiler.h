@@ -44,8 +44,10 @@
 #endif
 
 // Compile-time Assert
-#if __STDC_VERSION__ >= 201112L
+#if defined (__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
   #define TU_VERIFY_STATIC   _Static_assert
+#elif defined (__cplusplus) && __cplusplus >= 201103L
+  #define TU_VERIFY_STATIC   static_assert
 #else
   #define TU_VERIFY_STATIC(const_expr, _mess) enum { TU_XSTRCAT(_verify_static_, _TU_COUNTER_) = 1/(!!(const_expr)) }
 #endif
@@ -100,6 +102,7 @@
   #define TU_BSWAP32(u32) (__builtin_bswap32(u32))
 
 #elif defined(__ICCARM__)
+  #include <intrinsics.h>
   #define TU_ATTR_ALIGNED(Bytes)        __attribute__ ((aligned(Bytes)))
   #define TU_ATTR_SECTION(sec_name)     __attribute__ ((section(#sec_name)))
   #define TU_ATTR_PACKED                __attribute__ ((packed))
